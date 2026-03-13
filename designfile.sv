@@ -8,7 +8,7 @@
 `define OKAY  2'b00
 `define ERROR 2'b01
 `define RETRY 2'b10
-`define SPLIT 2'b11
+`define SPLIT 2'b11 // defines used to make the code readable and maintainable, so we don't have to change everywhere
  
  
 module ahb_slave(
@@ -29,22 +29,23 @@ output reg [31:0] hrdata
 reg [7:0] mem[256] = '{default : 12};
  
 //////////
-function bit[31:0] single_tr (input bit [31:0] addr, input bit [2:0] hsize);
-    unique case(hsize)
-    3'b000: begin
+ function bit[31:0] single_tr (input bit [31:0] addr, input bit [2:0] hsize); // single transfer function
+  // function performs only one single write transaction
+  unique case(hsize) //// to enforce only one match exists
+    3'b000: begin // case for byte transfer 8 bits
          mem[addr]  = hwdata[7:0];   
     end 
     
-    3'b001: begin
+    3'b001: begin // halfword transfer 16 bits
          mem[addr]     = hwdata[7:0];
          mem[addr + 1] = hwdata[15:8];
     end
     
-    3'b010: begin
-         mem[addr]     = hwdata[7:0];
+    3'b010: begin // word transfer 32 bits
+     mem[addr]     = hwdata[7:0]; // 4 bytes written sequentially
          mem[addr + 1] = hwdata[15:8];
          mem[addr + 2] = hwdata[23:16];
-         mem[addr + 3] = hwdata[31:24];
+     mem[addr + 3] = hwdata[31:24]; // little endian storage being followed as we store lsb first then msb's
     end
     endcase
     return addr;
@@ -53,19 +54,19 @@ endfunction
  
  
 ///////////////////////////////////////////////////////////////////////////////////
-function bit[31:0] unincr_wr (input bit [31:0] addr, input bit [2:0] hsize);
-    bit [31:0] raddr;
-    unique case(hsize)
+ function bit[31:0] unincr_wr (input bit [31:0] addr, input bit [2:0] hsize); // performs write and calculates next address
+  bit [31:0] raddr; // returns next address, as it is used for incrementing burst
+  unique case(hsize) // to enforce only one match exists 
     
      3'b000: begin
           mem[addr]    = hwdata[7:0];
-          raddr        = addr + 1; 
+          raddr        = addr + 1; // next transfer one byte later
      end
      
      3'b001: begin
          mem[addr]     = hwdata[7:0];
          mem[addr + 1] = hwdata[15:8];
-         raddr         = addr + 2;
+         raddr         = addr + 2; // next transfer 2 bytes later / halfword 16 bit also
      end
  
      3'b010: begin
@@ -73,11 +74,11 @@ function bit[31:0] unincr_wr (input bit [31:0] addr, input bit [2:0] hsize);
          mem[addr + 1] = hwdata[15:8];
          mem[addr + 2] = hwdata[23:16];
          mem[addr + 3] = hwdata[31:24];
-         raddr         = addr + 4;
+         raddr         = addr + 4; // next transfer word later
      end
  endcase
     
-return raddr;
+return raddr; // returns the next address for the following transfers
  
 endfunction
  
@@ -85,26 +86,28 @@ endfunction
  
  
  
- 
+ // boundary limit is [7:0] because max case we can consider is wrap 16 with 4 byte transfer, which is 64, so 2^7 karke we can handle it
 //////////////////////////////////////////////////////////////////////////////
-function bit[7:0] boundary(input bit [2:0] hburst, input [2:0] hsize);
+ function bit[7:0] boundary(input bit [2:0] hburst, input [2:0] hsize); // wrap boundary calculation implementation -> address gets wrapped back when boundary is reached
+  // eg: word transfer + wrap 4 
+  // 12 is start address, 12 0 4 8/ gets wrapped at 16 to 0
    bit [7:0] temp;
-   unique case(hsize)
-      3'b000: begin
-           unique case (hburst)
-              3'b010 : temp = 4 * 1;
+  unique case(hsize) // boundary = transfer_length * size of transfer 
+   3'b000: begin // hsize = 000 ( 1bit ) , 001 ( 2 bit ) , 010 (4 bit)
+       unique case (hburst) // 010 wrap 4, 100 wrap 8, 110 wrap 16
+              3'b010 : temp = 4 * 1; // 1 bit transfer with wrap 4 
               
-              3'b100 : temp =  8 * 1;
+              3'b100 : temp =  8 * 1; // case of 1 bit transfer with wrap 8 condition of h burst
               
-              3'b110 : temp = 16 * 1;
+              3'b110 : temp = 16 * 1; // case of 1 bit transfer with wrap 16 condition of hburst
             endcase
       end
       
       3'b001 : begin
             unique case (hburst)
-              3'b010 :  temp = 4 * 2;
+              3'b010 :  temp = 4 * 2; // 2 bit transfer with wrap 4 condition
               
-              3'b100 : temp =  8 * 2;
+              3'b100 : temp =  8 * 2; // case for wrap 8 with 2 bit transfer
               
               3'b110 : temp = 16 * 2;
             endcase
@@ -123,7 +126,7 @@ function bit[7:0] boundary(input bit [2:0] hburst, input [2:0] hsize);
     
     endcase
     
-    return temp;
+    return temp; // to store boundary case
     
 endfunction
  
