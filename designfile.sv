@@ -54,7 +54,7 @@ endfunction
  
  
 ///////////////////////////////////////////////////////////////////////////////////
- function bit[31:0] unincr_wr (input bit [31:0] addr, input bit [2:0] hsize); // performs write and calculates next address
+ function bit[31:0] unincr_wr (input bit [31:0] addr, input bit [2:0] hsize); // performs write and calculates next address // unspecified increment
   bit [31:0] raddr; // returns next address, as it is used for incrementing burst
   unique case(hsize) // to enforce only one match exists 
     
@@ -116,9 +116,9 @@ endfunction
       
       3'b010 : begin
             unique case (hburst)
-              3'b010 :  temp = 4 * 4;
+              3'b010 :  temp = 4 * 4; // word + wrap 4 -> 4 * 4 which implies boundary of 16
               
-              3'b100 : temp =  8 * 4;
+              3'b100 : temp =  8 * 4; // word + wrap8 -> boundary of 32 
               
               3'b110 : temp = 16 * 4;
             endcase
@@ -130,16 +130,16 @@ endfunction
     
 endfunction
  
- 
+ // wrap function
 function bit[31:0] wrap_wr (input bit [31:0] addr, input bit [7:0] boundary, input [2:0] hsize);
   bit [31:0] addr1, addr2, addr3,addr4;
   
   unique case(hsize)
     3'b000: begin
-       mem[addr] = hwdata[7:0];
+     mem[addr] = hwdata[7:0]; // case for byte transfer
        
-        if((addr + 1) % boundary == 0)
-         addr1 = (addr + 1) - boundary;
+     if((addr + 1) % boundary == 0) // to check if we reached end of wrap boundary
+      addr1 = (addr + 1) - boundary; // if yes, wrap back to start of the block
         else
          addr1 = (addr + 1);
          
@@ -154,7 +154,7 @@ function bit[31:0] wrap_wr (input bit [31:0] addr, input bit [7:0] boundary, inp
         else
          addr1 = (addr + 1);
          
-         mem[addr1] = hwdata[15:8];
+     mem[addr1] = hwdata[15:8]; // ADDRESS WRAPPING CHECKED AFTER EACH BYTE INCREMENT
          
        if((addr1 + 1) % boundary == 0)
          addr2 = (addr1 + 1) - boundary;
@@ -205,13 +205,13 @@ endfunction
 ////////////////////////////////////////////////////////////////////////////////////////////
  
  
-function bit[31:0] incr_wr(input bit [31:0] addr, input bit [2:0] hsize);
+ function bit[31:0] incr_wr(input bit [31:0] addr, input bit [2:0] hsize); // incrementing write
     
-    bit [31:0] raddr;
+  bit [31:0] raddr; // performs a write and calculates next address for increment bursts; USED FOR BURSTS LIKE INCR, INCR4, INCR8, INCR16
     
     unique case(hsize)
     
-     3'b000: begin
+     3'b000: begin // byte transfer
           mem[addr]    = hwdata[7:0];
           raddr        = addr + 1; 
      end
@@ -231,14 +231,15 @@ function bit[31:0] incr_wr(input bit [31:0] addr, input bit [2:0] hsize);
      end
  endcase
  
-return raddr;
+return raddr; // becomes next address for burst transfer
  
 endfunction
  
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////single transfer read
  
-function bit[31:0] single_tr_rd (input bit [31:0] addr, input bit [2:0] hsize);
+ function bit[31:0] single_tr_rd (input bit [31:0] addr, input bit [2:0] hsize); // performs one read transfer
+  // corresponds to HBURST = single
     unique case(hsize)
     3'b000: begin
          hrdata[7:0] = mem[addr];  
@@ -253,20 +254,20 @@ function bit[31:0] single_tr_rd (input bit [31:0] addr, input bit [2:0] hsize);
          hrdata[7:0]   = mem[addr];
          hrdata[15:8]  = mem[addr + 1];
          hrdata[23:16] = mem[addr + 2];
-         hrdata[31:24] = mem[addr + 3];
+     hrdata[31:24] = mem[addr + 3]; // little endian mapping, lsb comes first 
     end
     endcase
-    return addr;
+    return addr; // returns same address and doesnt advance it 
     
 endfunction
 ///////////////////////////////////////////////////////
  
 //////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////Read for unspec length
+/////////////////////////////Read for unspec length -> or incrementing read bhi bol sakte hain
 function bit[31:0] unincr_rd (input bit [31:0] addr, input bit [2:0] hsize);
-    bit [31:0] raddr;
+ bit [31:0] raddr; // raddr is the next address in the burst
     unique case(hsize)
-    
+    // supports burst like INCR, INCR4, INCR8, INCR16
      3'b000: begin
           hrdata[7:0] = mem[addr];
           raddr        = addr + 1; 
@@ -300,7 +301,7 @@ function bit[31:0] wrap_rd (input bit [31:0] addr, input bit [7:0] boundary, inp
     3'b000: begin
        hrdata[7:0] = mem[addr];
        
-        if((addr + 1) % boundary == 0)
+     if((addr + 1) % boundary == 0) // rest of the process is same as wrapping write case;
          addr1 = (addr + 1) - boundary;
         else
          addr1 = (addr + 1);
@@ -366,7 +367,9 @@ function bit[31:0] wrap_rd (input bit [31:0] addr, input bit [7:0] boundary, inp
 endfunction
  
 /////////////////////////////////////////////////////////////////////////////////////////
-function bit[31:0] incr_rd(input bit [31:0] addr, input bit [2:0] hsize);
+ function bit[31:0] incr_rd(input bit [31:0] addr, input bit [2:0] hsize); // incrementing burst read
+  // reads data from memory
+  // increments address and returns next address
     
     bit [31:0] raddr;
     
@@ -399,61 +402,68 @@ endfunction
  
 //////////////////////////////////////////////////////////////////////////////////
  
-typedef enum  {idle = 0, check_mode = 1, write = 2, read = 3, addr_decode = 4} state_type;
-state_type state, next_state;
+ typedef enum  {idle = 0, check_mode = 1, write = 2, read = 3, addr_decode = 4} state_type; // to define our fsm has 5 states, 
+ // these 5 are sequential whereas state_type state, next_state are combinational
+state_type state, next_state; // these 2 are the state registers
+ // next_state is calculated by combinational logic
  
 ///////////////////////////////////////////////////////////////////////////////////
- 
-always_ff@(posedge clk)
+ // fsm has 2 parts -> this part is the sequential part; state change happens synchronously
+ always_ff@(posedge clk) // sequential always block
 begin
-if(!hresetn)
+ if(!hresetn) // will be sensitive to positive edge, active low
 state <= idle;
 else
 state <= next_state;
-end
+end // simple reset lofic
 ///////////////////////////////////////////////////////////////////////////////////
  
  
  
-integer len_count = 0;
-reg first = 0;
-reg [31:0] retaddr;
-reg [31:0] next_addr;
-reg [7:0] wboundary;
+integer len_count = 0; // keeps track of burst length
+ // eg: 4 transactions, len_count stores how many we have completed
+reg first = 0; // to track first transfer of burst
+ reg [31:0] retaddr; // This stores the address returned by burst functions.
+ // eg: retaddr = incr_wr(next_addr,hsize)
+ reg [31:0] next_addr; // address fsm will use for next transaction // address fsm actually uses
+ reg [7:0] wboundary; // 8 bit variable to store the boundary
  
  
  
  
 /////////////////////////////////////////////////////////////////////////////////
-always_comb
+ // this part of fsm happens combinationally, to compute the next state 
+always_comb // blocks contains pure combinational logic.
 begin
     case(state)
   
-          idle : 
+          idle : // assigns all variables in our fsm to zero during idle state
           begin
-          next_state = check_mode;
-          hready = 1'b0;
-          len_count = 0;
+          next_state = check_mode; // as soon as slave enters IDLE, it immediately prepares to check for transaction
+          hready = 1'b0; // in idle slave isn't ready for transaction
+          len_count = 0; // previous burst finished so we reset
           first = 0;
-          hresp = `OKAY;
+          hresp = `OKAY; // normal transfer
           end
   
-          check_mode : 
+          check_mode : // identifying whether we have a valid transaction request or not
           begin
-                            hready = 1'b0;
-                            if(hresetn && hsel && hwrite)
-                                begin
-                                     if(haddr < 256) 
+                            hready = 1'b0; // again slave isnt ready yet 
+           if(hresetn && hsel && hwrite) // first thing is reset should be high and hsel should be 1, now in this case hwrite is 1
+            // depending on hwrite we decide whether we want to write data to memory or read from it
+                                begin // VALID WRITE REQUEST
+                                 if(haddr < 256) // checking if address is within the range
                                       begin
                                       next_state = addr_decode;
                                       end
-                                     else
+                                     else // address is outside the range
                                       begin 
                                        next_state = idle;
                                        hresp = `ERROR;
                                       end
                                 end
-                           else if (hresetn && hsel && !hwrite)
+           else if (hresetn && hsel && !hwrite) // in this case now hwrite is 0 
+            // basically logic for read operation
                                 begin
                                         if(haddr < 256)
                                         begin  
@@ -462,31 +472,34 @@ begin
                                         else
                                         begin
                                         next_state = idle;
-                                        hresp = `ERROR; 
+                                        hresp = `ERROR; // in this case hready is still 1, slave is responding with an error
                                         end
                                 end
-                           else
+                           else // either reset has hit or hsel isnt 1
                                 begin
                                 next_state = idle;
                                                                 end  
           end
   
-         addr_decode: 
+         addr_decode: // to compute the address for the next transaction
+          // and to determine whether we are reading or writing
           begin
-                          if(htrans == `NON_SEQ)
+           if(htrans == `NON_SEQ) // the beginning of the burst or first transaction of any transfer
                              begin
-                                       next_addr = haddr;
+                                       next_addr = haddr; // next address should be whatever we have on the bus
                                        
                                        if(hwrite)
-                                       next_state = write;
+                                       next_state = write; // jumping to write state
                                        else
-                                       next_state = read;
+                                       next_state = read; // jumping to read state
                                        
                                        
                              end 
-                             else if (htrans == `SEQ)  
+           // for all transactions after the first one
+           else if (htrans == `SEQ)  // continuation of a burst, only first address comes from master
+            // following address returned by the function
                              begin
-                                     next_addr  = retaddr;
+                              next_addr  = retaddr; // next address becomes address returned by the function eg: incr_wr()
                                             
                                            if(hwrite)
                                            next_state = write;
@@ -499,29 +512,36 @@ begin
          end
   
   
-         write:
+         write: // writing data to memory
           begin
                case(hburst)
   
   //////////////////////////           Single Write at HADDR
                     3'b000: begin  ////single transfer
-                       retaddr = single_tr(next_addr,hsize);
-                       hready     = 1'b1;
-                       next_state = idle;
+                     retaddr = single_tr(next_addr,hsize); // we call the single transfer function, while passing the 2 arguments
+                     // not really used in this case as single write we return the same address itself.
+                     // i.e. next_addr and hsize
+                       hready     = 1'b1; // once transaction completes
+                       next_state = idle; // jumping back to idle state
                        hresp = `OKAY;
                     end
    
    /////////////////////      INCREMENT for UNSPECIFIED LENGTH         
             
                    3'b001: 
-                       begin   ////incr mode
-                       
+                       begin   ////incr mode 
+                       // unspecified length burst
+                        // length isnt fixed
                        hready = 1'b1;
-                       retaddr = unincr_wr(next_addr, hsize);
+                        retaddr = unincr_wr(next_addr, hsize); // unspecified increment write
+                        // does 2 things: 1) writes data into memory 2) computes next address
+                        // retaddr is the next incremented address
                        hresp = `OKAY;      
                        
                        
-                       if(len_count < 32)
+                        if(len_count < 32) // limitation
+                         // theoretically infinite so to curb it 
+                         // assuming that master keeps sending seq transfers
                           begin
                           len_count = len_count + 1;
                           next_state = check_mode; 
@@ -535,17 +555,23 @@ begin
                     end
  ////////////////////////////4 beat wrapping
  
- 
+ // WRAP 4 BURST
+                // 4 transfers in a burst 
+                // addresses wrap inside a boundary
                   3'b010: 
                         begin
                           
-                          hready = 1'b1; 
-                          wboundary = boundary(hburst, hsize);
-                          retaddr   = wrap_wr(next_addr, wboundary, hsize);
+                          hready = 1'b1; // write completed, slave ready for next beat
+                         wboundary = boundary(hburst, hsize); // function to calculate boundary size
+                         retaddr   = wrap_wr(next_addr, wboundary, hsize); // writing data to memory
+                         // computing next wrapped address
+                         // inside wrap_wr = addr + transfer_size
                           hresp = `OKAY;
                                 
                                
                                  if(len_count <= 2) // 0 1 2 3
+                                  // after 4th beat, the transfer ends
+                                  // counter starts at 0, so 3 more allowed after it
                                      begin
                                      len_count = len_count + 1;
                                      next_state = check_mode;
@@ -593,6 +619,8 @@ begin
                                           hresp = `OKAY;
                                            
                                    if(len_count <= 6)
+                                    // 0 1 2 3 4 5 6 7
+                                    // 8 transfers in the wrap
                                      begin
                                      len_count = len_count + 1;
                                      next_state = check_mode;
